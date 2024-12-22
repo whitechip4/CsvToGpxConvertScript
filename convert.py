@@ -14,6 +14,9 @@ class CsvGpxConverter:
 
     _DEFAULT_AUTHER_NAME = "your name"
     _DEFAULT_TITLE = "gnss data"
+    _DEFAULT_MAX_GPX_FILE_SIZE = (
+        4 * 1024 * 1024
+    )  # 4MB due to Google Mymaps size limit is 5MB
 
     __XML_INDENT = ["", "  ", "    ", "      ", "        "]
 
@@ -25,6 +28,7 @@ class CsvGpxConverter:
         self.altitude_column_name = CsvGpxConverter._DEFAULT_ALTITUDE_COLUMN_NAME
         self.auther_name = CsvGpxConverter._DEFAULT_AUTHER_NAME
         self.title = CsvGpxConverter._DEFAULT_TITLE
+        self.max_gpx_file_size = CsvGpxConverter._DEFAULT_MAX_GPX_FILE_SIZE
 
     @property
     def date_column_name(self) -> str:
@@ -73,14 +77,22 @@ class CsvGpxConverter:
     @auther_name.setter
     def auther_name(self, value: str):
         self._auther_name = value
-        
+
     @property
     def title(self) -> str:
         return self._title
-    
+
     @title.setter
     def title(self, value: str):
         self._title = value
+
+    @property
+    def max_gpx_file_size(self) -> int:
+        return self._max_gpx_file_size
+
+    @max_gpx_file_size.setter
+    def max_gpx_file_size(self, value: int):
+        self._max_gpx_file_size = value
 
     ### private method
     def _is_csv_file(self, file_path: str) -> bool:
@@ -106,6 +118,88 @@ class CsvGpxConverter:
     def _get_column_min_max(self, df: pd.DataFrame, column_name: str) -> tuple:
         return df[column_name].min(), df[column_name].max()
 
+    def _output_gpx_file(
+        self, df: pd.DataFrame, output_file_path: str, file_number: int = 0
+    ) -> None:
+        # change date column format
+        df[self.date_column_name] = pd.to_datetime(
+            df[self.date_column_name]
+        ).dt.strftime("%Y-%m-%d")
+
+        # get initial datetime
+        initial_date = df[self.date_column_name][0]
+        initial_time = df[self.time_column_name][0]
+        initial_date_time = initial_date + "T" + initial_time + "Z"
+        print(f"record started datetime: {initial_date_time}")
+
+        # get min max
+        minlat, maxlat = self._get_column_min_max(df, self.lat_column_name)
+        minlon, maxlon = self._get_column_min_max(df, self.lon_column_name)
+        print(f"lat minmax[{minlat}:{maxlat}], lon minmax [{minlon}:{maxlon}]")
+
+        is_filesize_over = False
+        breaked_index = 0
+        # reference: gpx data exported by qoocam3 ultra
+        with open(output_file_path, "w", encoding="utf-8") as wfile:
+            # TODO refactoring
+            wfile.write(
+                f'<?xml version="1.0" encoding="utf-8"?><gpx xmlns="http://www.topografix.com/GPX/1/1" version="1.0" creator="{self.auther_name}">\n'
+            )
+            wfile.write(f"{self.__XML_INDENT[1]}<metadata>\n")
+            wfile.write(f"{self.__XML_INDENT[2]}<time>{initial_date_time}</time>\n")
+            wfile.write(
+                f'{self.__XML_INDENT[2]}<bounds minlat="{minlat}" maxlat="{maxlat}" minlon="{minlon}" maxlon="{maxlon}"/>\n',
+            )
+            wfile.write(f"{self.__XML_INDENT[1]}</metadata>\n")
+
+            wfile.write(f"{self.__XML_INDENT[1]}<trk>\n")
+            wfile.write(f"{self.__XML_INDENT[2]}<name>{self.title}</name>\n")
+            wfile.write(f"{self.__XML_INDENT[2]}<trkseg>\n")
+
+            for _index, row in df.iterrows():
+                wfile.write(
+                    f'{self.__XML_INDENT[3]}<trkpt lat="{row[self.lat_column_name]}" lon="{row[self.lon_column_name]}">\n'
+                )
+                wfile.write(
+                    f"{self.__XML_INDENT[4]}<ele>{row[self.altitude_column_name]}</ele>\n"
+                )
+                wfile.write(
+                    f"{self.__XML_INDENT[4]}<time>{row[self.date_column_name]}T{row[self.time_column_name ]}Z</time>\n"
+                )
+                wfile.write(f"{self.__XML_INDENT[3]}</trkpt>\n")
+                wfile.flush()
+                # if over max file size, break and separate data to next file
+                if os.path.getsize(output_file_path) > self.max_gpx_file_size:
+                    print(os.path.getsize(output_file_path))
+                    print(f"file size over {self.max_gpx_file_size} byte, break")
+                    is_filesize_over = True
+                    breaked_index = _index
+                    break
+            wfile.write(f"{self.__XML_INDENT[2]}</trkseg>\n")
+            wfile.write(f"{self.__XML_INDENT[1]}</trk>\n")
+            wfile.write("</gpx>")
+
+        # sepalate file if over size
+        if is_filesize_over:
+            # create next file name
+            if file_number == 0:
+                next_output_file_path = output_file_path.replace(
+                    ".gpx", f"_{file_number}.gpx"
+                )
+            else:
+                next_output_file_path = output_file_path.replace(
+                    f"_{file_number-1}.gpx", f"_{file_number}.gpx"
+                )
+            print(f"exported next file is : {next_output_file_path}")
+
+            sliced_df = df.iloc[breaked_index:].reset_index(drop=True)
+            self._output_gpx_file(sliced_df, next_output_file_path, file_number + 1)
+
+        print(
+            f"exported completed : filesize is {os.path.getsize(output_file_path)} byte"
+        )
+        print(f"file is : {os.path.join(os.path.dirname(__file__),output_file_path)}")
+
     ### public method
     def convert_csv_to_pdf(self, csv_file_path: str) -> bool:
 
@@ -118,63 +212,11 @@ class CsvGpxConverter:
         if not is_csv_format_correct:
             print(f"ERROR : {csv_file_path} label is not matched")
             return False
+        output_file_path = csv_file_path.replace(".csv", ".gpx")
 
-        try:
-            output_file_path = csv_file_path.replace(".csv", ".gpx")
-            # change date column format
-            df[self.date_column_name] = pd.to_datetime(
-                df[self.date_column_name]
-            ).dt.strftime("%Y-%m-%d")
+        # try:
+        self._output_gpx_file(df, output_file_path)
 
-            initial_date = df[self.date_column_name][0]
-            initial_time = df[self.time_column_name][0]
-            initial_date_time = initial_date + "T" + initial_time + "Z"
-            print(f"record started datetime: {initial_date_time}")
-
-            # get min max
-            minlat, maxlat = self._get_column_min_max(df, self.lat_column_name)
-            minlon, maxlon = self._get_column_min_max(df, self.lon_column_name)
-            print(f"lat minmax[{minlat}:{maxlat}], lon minmax [{minlon}:{maxlon}]")
-
-            # reference: gpx data exported by qoocam3 ultra
-            with open(output_file_path, "w", encoding="utf-8") as wfile:
-                # TODO refactoring
-                wfile.write(
-                    f'<?xml version="1.0" encoding="utf-8"?><gpx xmlns="http://www.topografix.com/GPX/1/1" version="1.0" creator="{self.auther_name}">\n'
-                )
-                wfile.write(f"{self.__XML_INDENT[1]}<metadata>\n")
-                wfile.write(f"{self.__XML_INDENT[2]}<time>{initial_date_time}</time>\n")
-                wfile.write(
-                    f'{self.__XML_INDENT[2]}<bounds minlat="{minlat}" maxlat="{maxlat}" minlon="{minlon}" maxlon="{maxlon}"/>\n',
-                )
-                wfile.write(f"{self.__XML_INDENT[1]}</metadata>\n")
-
-                wfile.write(f"{self.__XML_INDENT[1]}<trk>\n")
-                wfile.write(f"{self.__XML_INDENT[2]}<name>{self.title}</name>\n")
-                wfile.write(f"{self.__XML_INDENT[2]}<trkseg>\n")
-
-                for _index, row in df.iterrows():
-                    wfile.write(
-                        f'{self.__XML_INDENT[3]}<trkpt lat="{row[self.lat_column_name]}" lon="{row[self.lon_column_name]}">\n'
-                    )
-                    wfile.write(
-                        f"{self.__XML_INDENT[4]}<ele>{row[self.altitude_column_name]}</ele>\n"
-                    )
-                    wfile.write(
-                        f"{self.__XML_INDENT[4]}<time>{row[self.date_column_name]}T{row[self.time_column_name ]}Z</time>\n"
-                    )
-                    wfile.write(f"{self.__XML_INDENT[3]}</trkpt>\n")
-
-                wfile.write(f"{self.__XML_INDENT[2]}</trkseg>\n")
-                wfile.write(f"{self.__XML_INDENT[1]}</trk>\n")
-                wfile.write("</gpx>")
-        except Exception as e:
-            print(f"exception occured : {e}", file=sys.stderr)
-            return False
-
-        print(
-            f"converted completed, exported file is : {os.path.join(os.path.dirname(__file__),output_file_path)}"
-        )
         return True
 
 
