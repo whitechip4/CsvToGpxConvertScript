@@ -213,7 +213,6 @@ class CsvGpxConverter:
             return False
         output_file_path = csv_file_path.replace(".csv", ".gpx")
 
-        # try:
         self._output_gpx_file(df, output_file_path)
 
         return True
