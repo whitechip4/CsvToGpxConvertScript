@@ -73,6 +73,14 @@ class CsvGpxConverter:
     @auther_name.setter
     def auther_name(self, value: str):
         self._auther_name = value
+        
+    @property
+    def title(self) -> str:
+        return self._title
+    
+    @title.setter
+    def title(self, value: str):
+        self._title = value
 
     ### private method
     def _is_csv_file(self, file_path: str) -> bool:
@@ -102,26 +110,26 @@ class CsvGpxConverter:
     def convert_csv_to_pdf(self, csv_file_path: str) -> bool:
 
         if not self._is_csv_file(csv_file_path):
-            print(f"{csv_file_path} is not csv file")
+            print(f"ERROR : {csv_file_path} is not csv file")
             return False
 
         df = pd.read_csv(csv_file_path)
         is_csv_format_correct = self._is_csv_file_format_correct(df)
         if not is_csv_format_correct:
-            print(f"{csv_file_path} label is not matched")
+            print(f"ERROR : {csv_file_path} label is not matched")
             return False
 
         try:
             output_file_path = csv_file_path.replace(".csv", ".gpx")
-            # change date format
+            # change date column format
             df[self.date_column_name] = pd.to_datetime(
                 df[self.date_column_name]
             ).dt.strftime("%Y-%m-%d")
 
-            init_date = df[self.date_column_name][0]
-            init_time = df[self.time_column_name][0]
-            init_date_time = init_date + "T" + init_time + "Z"
-            print(f"recorded date: {init_date_time}")
+            initial_date = df[self.date_column_name][0]
+            initial_time = df[self.time_column_name][0]
+            initial_date_time = initial_date + "T" + initial_time + "Z"
+            print(f"record started datetime: {initial_date_time}")
 
             # get min max
             minlat, maxlat = self._get_column_min_max(df, self.lat_column_name)
@@ -135,7 +143,7 @@ class CsvGpxConverter:
                     f'<?xml version="1.0" encoding="utf-8"?><gpx xmlns="http://www.topografix.com/GPX/1/1" version="1.0" creator="{self.auther_name}">\n'
                 )
                 wfile.write(f"{self.__XML_INDENT[1]}<metadata>\n")
-                wfile.write(f"{self.__XML_INDENT[2]}<time>{init_date_time}</time>\n")
+                wfile.write(f"{self.__XML_INDENT[2]}<time>{initial_date_time}</time>\n")
                 wfile.write(
                     f'{self.__XML_INDENT[2]}<bounds minlat="{minlat}" maxlat="{maxlat}" minlon="{minlon}" maxlon="{maxlon}"/>\n',
                 )
@@ -161,7 +169,7 @@ class CsvGpxConverter:
                 wfile.write(f"{self.__XML_INDENT[1]}</trk>\n")
                 wfile.write("</gpx>")
         except Exception as e:
-            print(f"csv format is not correct {e}")
+            print(f"exception occured : {e}", file=sys.stderr)
             return False
 
         print(
@@ -173,7 +181,7 @@ class CsvGpxConverter:
 if __name__ == "__main__":
     # argument check
     if len(sys.argv) != 2:
-        print("Usage : convert.py [input filepath]")
+        print("USAGE : convert.py [input filepath]")
         exit(1)
     file_path = sys.argv[1]
 
