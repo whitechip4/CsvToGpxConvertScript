@@ -208,8 +208,7 @@ class CsvGpxConverter:
             return False
 
         df = pd.read_csv(csv_file_path)
-        is_csv_format_correct = self._is_csv_file_format_correct(df)
-        if not is_csv_format_correct:
+        if not self._is_csv_file_format_correct(df):
             print(f"ERROR : {csv_file_path} label is not matched")
             return False
         output_file_path = csv_file_path.replace(".csv", ".gpx")
